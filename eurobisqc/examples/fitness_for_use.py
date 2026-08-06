@@ -21,7 +21,9 @@ this.list_aplus = []
 
 # retrieve all qc-values
 
-this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e where e.dataprovider_id = 1071 ORDER BY e.qc ASC"
+dataprovider_id = 1071
+
+this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e where e.dataprovider_id = {dataprovider_id} ORDER BY e.qc ASC"
 
 
 # this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e where e.dataprovider_id >= 1177 and e.dataprovider_id < 1250 ORDER BY e.qc ASC"
@@ -197,7 +199,7 @@ def fitness_label():
 """
 
 
-def save_labels():
+def save_labels(dataprovider_id):
     print("START...")
     if mssql_db_functions.conn is None:
         this.conn = mssql_db_functions.open_db()
@@ -250,9 +252,9 @@ def save_labels():
     print("...DONE")
 
 
-def calc_datasets():
+def calc_datasets(dataprovider_id):
     # sql_string = "select e.dataprovider_id, e.fitness_label_id, count(*) as amount from eurobis e group by e.dataprovider_id, e.fitness_label_id ORDER BY dataprovider_id ASC"
-    sql_string = "select e.dataprovider_id, e.fitness_label_id, count(*) as amount from eurobis e WHERE dataprovider_id = 1071  group by e.dataprovider_id, e.fitness_label_id ORDER BY dataprovider_id ASC"
+    sql_string = f"select e.dataprovider_id, e.fitness_label_id, count(*) as amount from eurobis e WHERE dataprovider_id = {dataprovider_id}  group by e.dataprovider_id, e.fitness_label_id ORDER BY dataprovider_id ASC"
 
     if mssql_db_functions.conn is None:
         this.conn = mssql_db_functions.open_db()
@@ -287,7 +289,7 @@ def calc_datasets():
     z = df.loc[df['percentage'] != 100]
     f = z.loc[df['fitness_label_id'] == 2]
     # -> 862 4 labels: 0 / 2 / 3 / 4
-    g = df.loc[df['dataprovider_id'] == 1071]
+    g = df.loc[df['dataprovider_id'] == dataprovider_id]
 
     # print(z.head(30))
     print(f.head(30))
@@ -296,6 +298,6 @@ def calc_datasets():
 
 fitness_label()
 process_qcs_db()
-save_labels()
+save_labels(dataprovider_id)
 
-calc_datasets()
+calc_datasets(dataprovider_id)

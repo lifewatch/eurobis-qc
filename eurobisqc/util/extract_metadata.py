@@ -25,14 +25,18 @@ def flag_metadata(xml_input):
 
     # pprint.pprint(dict_input);
 
-    # Abstract
-    if 'abstract' in dict_input['eml:eml']['dataset']:
-        if dict_input['eml:eml']['dataset']['abstract'] is not None:
-            # Possible options are : section, para, markdown!
-            if len(dict_input['eml:eml']['dataset']['abstract']['para']) <= 100:
-                return None
-    else:
-        # No abstract
+    # Abstract + Additional Info
+    abs_addinfo_length = 0
+
+    dataset = dict_input['eml:eml']['dataset']
+
+    if 'abstract' in dataset and dataset['abstract'] is not None:
+        abs_addinfo_length += len(dataset['abstract']['para'])
+
+    if 'additionalInfo' in dataset and dataset['additionalInfo'] is not None:
+        abs_addinfo_length += len(dataset['additionalInfo']['para'])
+
+    if abs_addinfo_length <= 100:
         return None
 
     # Citation
