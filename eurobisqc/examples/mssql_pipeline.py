@@ -150,6 +150,10 @@ def dataset_qc_labeling(dataset_id, disable_index=True, with_logging=True, pool_
     data_archive = eurobis_dataset.EurobisDataset()
     data_archive.load_dataset(dataset_id)
 
+    if not data_archive.has_eurobis_links:
+        this.logger.info(f"Skipping dataset {data_archive.dataprovider_id}: no Download Toolbox or Eurobis IPT link")
+        return None
+
     if with_logging:
         this.logger.info(f"--------------------------------------------------")
         this.logger.info(f"Loaded dataset {data_archive.dataset_name}, id = {data_archive.dataprovider_id} ")

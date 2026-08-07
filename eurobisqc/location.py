@@ -35,7 +35,7 @@ qc_mask_18 = qc_flags.QCFlag.MIN_MAX_DEPTH_VERIFIED.bitmask
 # Within the call to xylookup
 qc_mask_19 = qc_flags.QCFlag.DEPTH_MAP_VERIFIED.bitmask
 
-# Coordinate Precision < 5000 and not null
+# Coordinate Precision <= 5000 and not null
 qc_mask_21 = qc_flags.QCFlag.COORDINATES_PRECISION_PRESENT.bitmask
 
 
@@ -63,7 +63,7 @@ def check_basic_record(record):
 
             # Is coordination precision present?
             if 'coordinatePrecision' in record:
-                if (misc.is_number(record['coordinatePrecision']) and float(record['coordinatePrecision']) < 5000) or record['coordinatePrecision'] is None:
+                if (misc.is_number(record['coordinatePrecision']) and float(record['coordinatePrecision']) <= 5000) or record['coordinatePrecision'] is None:
                     qc_mask |= qc_mask_21
         else:
             return 0

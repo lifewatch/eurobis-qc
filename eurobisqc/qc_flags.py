@@ -28,11 +28,11 @@ class QCFlag(Enum):
     DEPTH_FOR_SPECIES_OK = ("Depth coherent with species depth range", 20)  # FLAG - Not implemented
 
     """ [EUROBIS-420] - extra flags """
-    COORDINATES_PRECISION_PRESENT = ("Coordinates uncertainty <5000m", 21)  # In location
+    COORDINATES_PRECISION_PRESENT = ("Coordinates uncertainty <=5000m", 21)  # In location
     SAMPLE_DEVICE_PRESENT = ("Sampling device present", 22)  # In measurements
     ABUNDANCE_PRESENT = ("Abundance", 23)  # In measurements
     ABIOTIC_MAPPED_PRESENT = ("Abiotic data is mapped to BODC terms", 24)  # In measurements
-    GOODMETADATA = ("includes citation, title, license, and abstract with >100 characters",
+    GOODMETADATA = ("includes citation, title, license, and abstract + additionalInfo with >100 characters",
                     25)  # On dataset level - extract_metadata.py
 
     def __init__(self, message, qc_number):

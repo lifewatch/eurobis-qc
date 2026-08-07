@@ -1,6 +1,7 @@
 import sys
 import logging
 import requests
+import re
 from pyodbc import Error
 # This is to cope with possible hangs in iMIS API call
 from stopit import threading_timeoutable
@@ -150,6 +151,7 @@ class EurobisDataset:
         self.dataset_name = ""
         self.records_for_lookup = []
         self.pyxylookup_counter = 0
+        self.has_eurobis_links = False
 
     def get_provider_data(self, das_prov_id):
         """ Obtain the dataset info from the dataproviders table
@@ -313,14 +315,16 @@ class EurobisDataset:
             :param das_prov_id
             """
         self.get_provider_data(das_prov_id)
-        self.get_ev_occ_records(das_prov_id)
-        self.get_emof_records(das_prov_id)
 
         area_res = None
 
         while area_res is None:
             area_res = self.do_get_areas(self.imis_das_id, timeout=this.imis_timeout)
             this.logger.warning("Had to re-issue call to IMIS")
+
+        if self.has_eurobis_links is True:
+            self.get_ev_occ_records(das_prov_id)
+            self.get_emof_records(das_prov_id)
 
     @threading_timeoutable()
     def do_get_areas(self, imis_das_id):
@@ -330,6 +334,14 @@ class EurobisDataset:
             :param imis_das_id - dataset IMIS identifier """
 
         return self.get_areas_from_eml(imis_das_id)
+
+    def check_eurobis_links(self, eml_text):
+        if not eml_text:
+            return False
+        patterns = [r'eurobis\.org/toolbox/en/download', r'ipt\.vliz\.be/eurobis']
+        for p in patterns:
+            if re.search(p, eml_text, re.I):
+                return True
 
     def get_areas_from_eml(self, imis_das_id):
         """ Given a IMIS Dataset ID, queries the IMIS web service for
@@ -352,9 +364,11 @@ class EurobisDataset:
                 eml = response.text
 
         if eml is not None:
-            self.areas = extract_area.find_areas(eml)
-            # Good metadata: includes citation, title, license, and abstract with >100 characters. [EUROBIS-420]
-            self.goodmetadata = extract_metadata.flag_metadata(eml)
+            self.has_eurobis_links = self.check_eurobis_links(eml)
+            if self.has_eurobis_links:
+                self.areas = extract_area.find_areas(eml)
+                # Good metadata: includes citation, title, license, and abstract with >100 characters. [EUROBIS-420]
+                self.goodmetadata = extract_metadata.flag_metadata(eml)
         else:
             self.areas = None
 
