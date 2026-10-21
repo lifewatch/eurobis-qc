@@ -17,17 +17,18 @@ this.list_b = []
 this.list_a1 = []
 this.list_a2 = []
 this.list_a3 = []
-this.list_aplus = []
+this.list_aplus1 = []
+this.list_aplus2 = []
+this.list_aplus3 = []
 
-# retrieve all qc-values
-
-dataprovider_id = 1071
-
-this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e where e.dataprovider_id = {dataprovider_id} ORDER BY e.qc ASC"
-
-
-# this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e where e.dataprovider_id >= 1177 and e.dataprovider_id < 1250 ORDER BY e.qc ASC"
-# this.sql_all_qc = f"SELECT distinct(e.qc) FROM eurobis e ORDER BY e.qc ASC"
+# For one provider, use "dataprovider_id = 1471".
+# For a selection, use "dataprovider_id IN (1470, 1472, 1475)".
+# For a range, use "dataprovider_id >= 1470 AND dataprovider_id <= 1476"
+# For all providers, use "1=1" (no filter).
+this.provider_filter = "dataprovider_id >= 1470 AND dataprovider_id <= 1476"
+this.sql_all_qc = (
+    f"SELECT DISTINCT qc FROM eurobis WHERE {this.provider_filter} ORDER BY qc ASC"
+)
 
 
 def grab_qcs(sql_string):
@@ -94,10 +95,8 @@ def process_qcs_db():
                 if qc_id == 4:
                     this.list_a1.append(qc)
                     a1 += 1
-                    print('HIER')
                     break
                 if qc_id == 5:
-                    print(flags)
                     this.list_a2.append(qc)
                     a2 += 1
                     break
@@ -199,73 +198,89 @@ def fitness_label():
 """
 
 
-def save_labels(dataprovider_id):
+def save_labels():
     print("START...")
-    if mssql_db_functions.conn is None:
+    this.conn = mssql_db_functions.conn
+    if this.conn is None:
         this.conn = mssql_db_functions.open_db()
 
     if this.conn is not None:
         cursor = this.conn.cursor()
 
-        """ Set all Fitness flags on 0 """
-        # qry_b = f"UPDATE eurobis set fitness_label_id = 0 where fitness_label_id != 0)"
-        # cursor.execute(qry_b)
-        # this.conn.commit()
+        # Records that do not qualify for any label must use SQL NULL.
+        labelled_qcs = (
+            this.list_c + this.list_b + this.list_a1 + this.list_a2 + this.list_a3
+            + this.list_aplus1 + this.list_aplus2 + this.list_aplus3
+        )
+        qry_unlabelled = (
+            f"UPDATE eurobis SET fitness_label_id = NULL WHERE ({this.provider_filter})"
+        )
+        if labelled_qcs:
+            qc_values = ",".join(map(str, labelled_qcs))
+            qry_unlabelled += f" AND (qc IS NULL OR qc NOT IN ({qc_values}))"
+        cursor.execute(qry_unlabelled)
+        this.conn.commit()
 
         if len(this.list_c):
             print("Updating C")
             c_qcs = ",".join(map(str, this.list_c))
-            qry_c = f"UPDATE eurobis set fitness_label_id = 4 where qc in ({c_qcs})"
+            qry_c = f"UPDATE eurobis set fitness_label_id = 4 where ({this.provider_filter}) AND qc in ({c_qcs})"
             cursor.execute(qry_c)
             this.conn.commit()
         if len(this.list_b):
             print("Updating B")
             b_qcs = ",".join(map(str, this.list_b))
-            qry_b = f"UPDATE eurobis set fitness_label_id = 3 where qc in ({b_qcs})"
+            qry_b = f"UPDATE eurobis set fitness_label_id = 3 where ({this.provider_filter}) AND qc in ({b_qcs})"
             cursor.execute(qry_b)
             this.conn.commit()
         if len(this.list_a1):
             print("Updating A")
             a_qcs1 = ",".join(map(str, this.list_a1))
-            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where qc in ({a_qcs1})"
+            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where ({this.provider_filter}) AND qc in ({a_qcs1})"
             cursor.execute(qry_a)
             this.conn.commit()
         if len(this.list_a2):
             print("Updating A")
             a_qcs2 = ",".join(map(str, this.list_a2))
-            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where qc in ({a_qcs2})"
+            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where ({this.provider_filter}) AND qc in ({a_qcs2})"
             cursor.execute(qry_a)
             this.conn.commit()
         if len(this.list_a3):
             print("Updating A")
             a_qcs3 = ",".join(map(str, this.list_a3))
-            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where qc in ({a_qcs3})"
+            qry_a = f"UPDATE eurobis set fitness_label_id = 2 where ({this.provider_filter}) AND qc in ({a_qcs3})"
             cursor.execute(qry_a)
             this.conn.commit()
-        if len(this.list_aplus):
+        aplus_qc_values = this.list_aplus1 + this.list_aplus2 + this.list_aplus3
+        if aplus_qc_values:
             print("Updating A+")
-            aplus_qcs = ",".join(map(str, this.list_aplus))
-            qry_aplus = f"UPDATE eurobis set fitness_label_id = 1 where qc in ({aplus_qcs})"
+            aplus_qcs = ",".join(map(str, aplus_qc_values))
+            qry_aplus = f"UPDATE eurobis set fitness_label_id = 1 where ({this.provider_filter}) AND qc in ({aplus_qcs})"
             cursor.execute(qry_aplus)
             this.conn.commit()
 
     print("...DONE")
 
 
-def calc_datasets(dataprovider_id):
-    # sql_string = "select e.dataprovider_id, e.fitness_label_id, count(*) as amount from eurobis e group by e.dataprovider_id, e.fitness_label_id ORDER BY dataprovider_id ASC"
-    sql_string = f"select e.dataprovider_id, e.fitness_label_id, count(*) as amount from eurobis e WHERE dataprovider_id = {dataprovider_id}  group by e.dataprovider_id, e.fitness_label_id ORDER BY dataprovider_id ASC"
+def calc_datasets():
+    sql_string = (
+        "SELECT dataprovider_id, fitness_label_id, count(*) AS amount FROM eurobis "
+        f"WHERE {this.provider_filter} "
+        "GROUP BY dataprovider_id, fitness_label_id ORDER BY dataprovider_id ASC"
+    )
 
-    if mssql_db_functions.conn is None:
+    this.conn = mssql_db_functions.conn
+    if this.conn is None:
         this.conn = mssql_db_functions.open_db()
 
-    if this.conn is not None:
-        cursor = this.conn.cursor()
-
-    cursor.execute(sql_string)
+    if this.conn is None:
+        raise ConnectionError('Cannot calculate FFU labels: no DB connection.')
 
     df = pd.read_sql(sql_string, this.conn)
     df.to_csv('result.csv', index=False)
+    if df.empty:
+        this.logger.info('No records found for the selected providers.')
+        return
 
 
     # print(df.groupby('dataprovider_id')['amount'].sum()[0])
@@ -273,6 +288,7 @@ def calc_datasets(dataprovider_id):
 
 
     # df = pd.read_csv('result.csv')
+    # Zero is only a grouping value in memory; it is never saved as a label ID.
     df['fitness_label_id'] = df['fitness_label_id'].fillna(0)
 
     # TOTALSUM PER PROVIDER_ID
@@ -286,18 +302,34 @@ def calc_datasets(dataprovider_id):
     df.drop(labels='amount_x', axis=1, inplace=True)
     df.drop_duplicates(subset=['dataprovider_id', 'fitness_label_id', 'amount_y'], keep='last', inplace=True)
     df['percentage'] = df['amount'] / df['amount_y'] * 100
+
+    # Choose the highest label
+    counts = df.pivot_table(
+        index='dataprovider_id', columns='fitness_label_id',
+        values='amount', aggfunc='sum', fill_value=0,
+    ).reindex(columns=[1, 2, 3, 4], fill_value=0)
+
+    totals = df.groupby('dataprovider_id')['amount'].sum()
+    qualifying_a = counts[1] + counts[2]
+    qualifying_b = qualifying_a + counts[3]
+    qualifying_c = qualifying_b + counts[4]
+
+    ffu = pd.Series('Unlabelled', index=totals.index)
+    ffu.loc[qualifying_c > totals / 2] = 'C'
+    ffu.loc[qualifying_b > totals / 2] = 'B'
+    ffu.loc[qualifying_a > totals / 2] = 'A'
+
+    df['ffu'] = df['dataprovider_id'].map(ffu)
+
     z = df.loc[df['percentage'] != 100]
-    f = z.loc[df['fitness_label_id'] == 2]
-    # -> 862 4 labels: 0 / 2 / 3 / 4
-    g = df.loc[df['dataprovider_id'] == dataprovider_id]
+    f = z.loc[z['fitness_label_id'] == 2]
 
     # print(z.head(30))
     print(f.head(30))
-    print(g.head(30))
+    print(df.head(30))
 
 
 fitness_label()
 process_qcs_db()
-save_labels(dataprovider_id)
-
-calc_datasets(dataprovider_id)
+save_labels()
+calc_datasets()

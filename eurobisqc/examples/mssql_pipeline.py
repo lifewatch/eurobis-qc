@@ -289,8 +289,8 @@ def process_dataset_list(pool_no, dataset_id_list, from_pool=False, with_logging
         return pool_no
 
     # Disable index on QC once
-    if not from_pool:
-        eurobis_dataset.EurobisDataset.disable_qc_index()
+    # if not from_pool:
+    #     eurobis_dataset.EurobisDataset.disable_qc_index()
 
     errors = 0
 
@@ -311,8 +311,8 @@ def process_dataset_list(pool_no, dataset_id_list, from_pool=False, with_logging
             this.logger.info(f"Processed dataset {dataset_id} in  {time.time() - start_file}")
 
     # REBUILD index on QC once
-    if not from_pool:
-        eurobis_dataset.EurobisDataset.rebuild_qc_index()
+    # if not from_pool:
+    #     eurobis_dataset.EurobisDataset.rebuild_qc_index()
 
     if with_logging:
         this.logger.info(f"Pool {pool_no} completed in {time.time() - start}")
