@@ -10,7 +10,7 @@ services:
       be.vliz.container.project: "EurOBIS"
       be.vliz.container.group: "EurOBIS QC python"
       be.vliz.container.vcs-url: "https://github.com/lifewatch/eurobis-qc"
-      be.vliz.container.docs-url: "https://github.com/lifewatch/eurobis-qc/tree/main/docker/DOCKER.MD"
+      be.vliz.container.docs-url: "https://github.com/lifewatch/eurobis-qc/tree/main/docker/DOCKER.md"
 
     build:
       context: ..
