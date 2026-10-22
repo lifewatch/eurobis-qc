@@ -1,0 +1,33 @@
+name: eurobis-qc-python
+services:
+  qc:
+    image: eurobis-qc-python:latest
+    init: true
+    restart: unless-stopped
+    labels:
+      be.vliz.container.description: "QC python container for EurOBIS"
+      be.vliz.container.owner: "dante.dumon@vliz.be"
+      be.vliz.container.project: "EurOBIS"
+      be.vliz.container.group: "EurOBIS QC python"
+      be.vliz.container.vcs-url: "https://github.com/lifewatch/eurobis-qc"
+      be.vliz.container.docs-url: "https://github.com/lifewatch/eurobis-qc/tree/main/docker/DOCKER.MD"
+
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    working_dir: /output
+    volumes:
+      - type: bind
+        source: ../dbworks/resources/config.ini
+        target: /app/dbworks/resources/config.ini
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../dbworks/database
+        target: /app/dbworks/database
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../output
+        target: /output

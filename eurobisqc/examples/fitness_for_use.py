@@ -1,6 +1,7 @@
 """ Set fitness for use on all records  """
 
 import sys
+import os
 import logging
 from dbworks import mssql_db_functions
 from eurobisqc.qc_flags import QCFlag
@@ -21,21 +22,39 @@ this.list_aplus1 = []
 this.list_aplus2 = []
 this.list_aplus3 = []
 
-# For one provider, use "dataprovider_id = 1471".
-# For a selection, use "dataprovider_id IN (1470, 1472, 1475)".
-# For a range, use "dataprovider_id >= 1470 AND dataprovider_id <= 1476"
-# For all providers, use "1=1" (no filter).
-this.provider_filter = "dataprovider_id >= 1470 AND dataprovider_id <= 1476"
-this.sql_all_qc = (
-    f"SELECT DISTINCT qc FROM eurobis WHERE {this.provider_filter} ORDER BY qc ASC"
-)
+# Default provider selection when this script is run on its own.
+# Use None to process all providers (no filter).
+this.default_provider_ids = [1476]
+this.provider_filter = ""
+
+
+def build_provider_filter(provider_ids):
+    """ Builds the SQL condition restricting records to the given dataprovider IDs """
+    if not provider_ids:
+        return "1=1"
+    return f"dataprovider_id IN ({','.join(str(int(p)) for p in provider_ids)})"
+
+
+def reset_lists():
+    """ Clears the QC lists so the labelling can run more than once per process """
+    this.dataset_qc = []
+    this.list_c = []
+    this.list_b = []
+    this.list_a1 = []
+    this.list_a2 = []
+    this.list_a3 = []
+    this.list_aplus1 = []
+    this.list_aplus2 = []
+    this.list_aplus3 = []
 
 
 def grab_qcs(sql_string):
     """ Queries the database to retrieve a list of all datasets with records
         in eurobis IMPORTANT, datasets are sorted """
 
-    if mssql_db_functions.conn is None:
+    # Reuse the connection opened by the QC pipeline when there is one.
+    this.conn = mssql_db_functions.conn
+    if this.conn is None:
         this.conn = mssql_db_functions.open_db()
 
     if this.conn is not None:
@@ -52,7 +71,7 @@ def grab_qcs(sql_string):
 def process_qcs_db():
     """ Processes the entire DB either using multiprocessing or not """
     this.logger.debug(f"Starting fitness-for-use labeling")
-    grab_qcs(this.sql_all_qc)
+    grab_qcs(f"SELECT DISTINCT qc FROM eurobis WHERE {this.provider_filter} ORDER BY qc ASC")
 
     # this.dataset_qc.remove(0)
     # this.dataset_qc.remove(None)
@@ -319,7 +338,7 @@ def calc_datasets():
     ffu.loc[qualifying_b > totals / 2] = 'B'
     ffu.loc[qualifying_a > totals / 2] = 'A'
 
-    df['ffu'] = df['dataprovider_id'].map(ffu)
+    df['ffu_dataset_level'] = df['dataprovider_id'].map(ffu)
 
     z = df.loc[df['percentage'] != 100]
     f = z.loc[z['fitness_label_id'] == 2]
@@ -329,7 +348,27 @@ def calc_datasets():
     print(df.head(30))
 
 
-fitness_label()
-process_qcs_db()
-save_labels()
-calc_datasets()
+def run(provider_ids=None):
+    """ Calculates and saves the fitness-for-use labels for the given dataprovider IDs
+        (all providers when provider_ids is None or empty) """
+    this.provider_filter = build_provider_filter(provider_ids)
+    reset_lists()
+    fitness_label()
+    process_qcs_db()
+    save_labels()
+    calc_datasets()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Calculate and save EuroBIS fitness-for-use labels.')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        '--providers', type=int, nargs='+',
+        default=this.default_provider_ids,
+        help='Dataprovider IDs to label (defaults to the default_provider_ids in this script).',
+    )
+    group.add_argument('--all', action='store_true', help='Label all dataproviders.')
+    args = parser.parse_args()
+    run(None if args.all else args.providers)
