@@ -113,7 +113,7 @@ def do_db_multi_selection(dataset_ids, dataset_names, dataset_numbers = 0):
         dataset_names_lists = misc.split_list(dataset_names, n_cpus)
 
     # Disable the qc index...
-    eurobis_dataset.EurobisDataset.disable_qc_index()
+    # eurobis_dataset.EurobisDataset.disable_qc_index()
 
     result_pool = []
     for i, dataset_id_list in enumerate(dataset_id_lists):
@@ -129,7 +129,7 @@ def do_db_multi_selection(dataset_ids, dataset_names, dataset_numbers = 0):
     pool.join()
 
     # Rebuild the QC index
-    eurobis_dataset.EurobisDataset.rebuild_qc_index()
+    # eurobis_dataset.EurobisDataset.rebuild_qc_index()
 
     this.logger.info(f"Started at: {start_time}. All processes have completed after {time.time() - start_time}")
 
