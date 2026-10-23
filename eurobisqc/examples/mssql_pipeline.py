@@ -18,7 +18,7 @@ from eurobisqc.util import misc
 # Use "this" trick
 this = sys.modules[__name__]
 this.logger = logging.getLogger(__name__)
-this.logger.level = logging.DEBUG
+this.logger.level = logging.INFO
 this.logger.addHandler(logging.StreamHandler())
 
 this.PROCESS_BATCH_SIZE = 1000

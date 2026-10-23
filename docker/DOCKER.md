@@ -85,6 +85,7 @@ runs, such as `process_all`, run the job in the background and write the
 output to a log file in `../output`:
 
 ```sh
+nohup sh -c 'python -m eurobisqc.examples.process_all; echo "exit code: $?"' > /output/process_all.log 2>&1 &
 nohup python -m eurobisqc.examples.process_all > /output/run.log 2>&1 &
 tail -f /output/run.log
 ```

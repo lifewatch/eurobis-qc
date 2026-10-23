@@ -92,8 +92,8 @@ def process_qcs_db():
     for qc in this.dataset_qc:
         flags = QCFlag.decode_mask(qc)
         all_flags[qc] = flags
-        print('--')
-        print(flags)
+        # print('--')
+        # print(flags)
 
         for fitness_id, listFlags in this.labels.items():
             # print(fitness_id)
@@ -142,7 +142,7 @@ def process_qcs_db():
     print("b", b)
     print("c", c)
 
-    print(this.list_c)
+    # print(this.list_c)
 
 
 # this.logger.info(all_flags)
@@ -209,7 +209,7 @@ def fitness_label():
         7: qc_b,
         8: qc_c,
     }
-    print(this.labels)
+    # print(this.labels)
 
 
 """ Always on the occurence record QC label - events are nog lablled 
@@ -283,9 +283,10 @@ def save_labels():
 
 def calc_datasets():
     sql_string = (
-        "SELECT dataprovider_id, fitness_label_id, count(*) AS amount FROM eurobis "
+        "SELECT dataprovider_id, fitness_label_id, count(*) AS amount, dataproviders.IMIS_DasID FROM eurobis "
+        "INNER JOIN dataproviders ON eurobis.dataprovider_id = dataproviders.id "
         f"WHERE {this.provider_filter} "
-        "GROUP BY dataprovider_id, fitness_label_id ORDER BY dataprovider_id ASC"
+        "GROUP BY dataprovider_id, fitness_label_id, dataproviders.IMIS_DasID ORDER BY dataprovider_id ASC"
     )
 
     this.conn = mssql_db_functions.conn
@@ -296,8 +297,8 @@ def calc_datasets():
         raise ConnectionError('Cannot calculate FFU labels: no DB connection.')
 
     df = pd.read_sql(sql_string, this.conn)
-    df.to_csv('result.csv', index=False)
     if df.empty:
+        df.to_csv('result.csv', index=False)
         this.logger.info('No records found for the selected providers.')
         return
 
@@ -340,12 +341,14 @@ def calc_datasets():
 
     df['ffu_dataset_level'] = df['dataprovider_id'].map(ffu)
 
-    z = df.loc[df['percentage'] != 100]
-    f = z.loc[z['fitness_label_id'] == 2]
+    # One row per provider and record label, with the dataset label of that provider.
+    # Unlabelled records are written with an empty fitness_label_id, as in the database.
+    result = df.rename(columns={'amount_y': 'total_amount'})
+    result['fitness_label_id'] = result['fitness_label_id'].astype('Int64').replace(0, pd.NA)
+    result.to_csv('result.csv', index=False)
 
-    # print(z.head(30))
-    print(f.head(30))
-    print(df.head(30))
+    print('Datasets per fitness label:')
+    print(ffu.value_counts().to_string())
 
 
 def run(provider_ids=None):

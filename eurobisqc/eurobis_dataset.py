@@ -16,7 +16,8 @@ from eurobisqc.util import misc
 this = sys.modules[__name__]
 # This is not multiprocess "safe" output can be garbled...
 this.logger = logging.getLogger(__name__)
-this.logger.level = logging.DEBUG
+# INFO keeps the per-dataset summary; DEBUG also logs every batch of 1000 records.
+this.logger.level = logging.INFO
 this.logger.addHandler(logging.StreamHandler())
 
 # Allow this.imis_timeout seconds for the IMIS call to return when fetching the areas
