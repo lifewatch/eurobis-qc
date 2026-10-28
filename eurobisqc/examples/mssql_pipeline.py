@@ -3,7 +3,6 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from _functools import reduce
 
 from dbworks import mssql_db_functions as mssql
 from eurobisqc import eurobis_dataset
@@ -13,7 +12,6 @@ from eurobisqc import required_fields
 from eurobisqc import taxonomy
 from eurobisqc import time_qc
 from eurobisqc import qc_flags
-from eurobisqc.util import misc
 
 # Use "this" trick
 this = sys.modules[__name__]
@@ -118,21 +116,51 @@ def qc_emof(record, data_archive):
         :param data_archive: The archive being processed
         :returns the calculated joined qc for the emof records """
 
-    qc_em = 0
+    return data_archive.emof_qc.get(data_archive.emof_key(record), 0)
 
-    if data_archive.darwin_core_type == data_archive.EVENT:
-        key = f"{record['dataprovider_id']}_{'NULL' if record['eventID'] is None else record['eventID']}_" \
-              f"{'NULL' if record['occurrenceID'] is None else record['occurrenceID']}"
-    else:
-        key = f"{record['dataprovider_id']}_NULL_" \
-              f"{'NULL' if record['occurrenceID'] is None else record['occurrenceID']}"
 
-    if key in data_archive.emof_indices:
-        measurements_qc = measurements.check(data_archive.emof_indices[key])
-        # These are per single emof record, "or" them together
-        qc_em |= reduce(lambda x, y: x | y, measurements_qc)
+def build_emof_qc(data_archive):
+    """ Streams the eMoF records of the dataset and keeps only their "or"-ed qc per key,
+        so the eMoF records themselves never have to be in memory together
+        :param data_archive: The archive being processed """
 
-    return qc_em
+    data_archive.emof_qc = {}
+    emof_count = 0
+
+    for emof_record in data_archive.iter_emof_records(data_archive.dataprovider_id):
+        key = data_archive.emof_key(emof_record)
+        data_archive.emof_qc[key] = data_archive.emof_qc.get(key, 0) | measurements.check_record(emof_record)
+        emof_count += 1
+
+    return emof_count
+
+
+def flush_lookups(data_archive):
+    """ Executes the pending pyxylookup calls, must be done before a chunk is written to the DB
+        :param data_archive: The archive being processed """
+
+    if len(data_archive.records_for_lookup):
+        location.check_xy(data_archive.records_for_lookup)
+        data_archive.pyxylookup_counter += 1
+        dateTimeObj = datetime.now()
+        this.logger.debug(f"{dateTimeObj}: Lookups C: {data_archive.pyxylookup_counter}")
+        # Empty the list
+        data_archive.records_for_lookup = []
+
+
+def update_chunk(chunk, records_done, data_archive, record_type):
+    """ Writes the qc of a chunk of records to the DB, committing every PROCESS_BATCH_SIZE records
+        :param chunk: The records to update
+        :param records_done: Number of records of this type already written (for the progress logging)
+        :param data_archive: The archive being processed
+        :param record_type: EVENT or OCCURRENCE """
+
+    for offset in range(0, len(chunk), this.PROCESS_BATCH_SIZE):
+        process_batch = chunk[offset:offset + this.PROCESS_BATCH_SIZE]
+        eurobis_dataset.EurobisDataset.update_record_qc(process_batch,
+                                                        (records_done + offset) // this.PROCESS_BATCH_SIZE,
+                                                        this.PROCESS_BATCH_SIZE,
+                                                        data_archive.dataprovider_id, record_type)
 
 
 def dataset_qc_labeling(dataset_id, disable_index=True, with_logging=True, pool_no=0):
@@ -148,7 +176,7 @@ def dataset_qc_labeling(dataset_id, disable_index=True, with_logging=True, pool_
         return None
 
     data_archive = eurobis_dataset.EurobisDataset()
-    data_archive.load_dataset(dataset_id)
+    data_archive.load_metadata(dataset_id)
 
     if not data_archive.has_eurobis_links:
         this.logger.info(f"Skipping dataset {data_archive.dataprovider_id}: no Download Toolbox or Eurobis IPT link")
@@ -157,9 +185,6 @@ def dataset_qc_labeling(dataset_id, disable_index=True, with_logging=True, pool_
     if with_logging:
         this.logger.info(f"--------------------------------------------------")
         this.logger.info(f"Loaded dataset {data_archive.dataset_name}, id = {data_archive.dataprovider_id} ")
-        this.logger.info(f"Number of event records: {len(data_archive.event_recs)}")
-        this.logger.info(f"Number of occurrence records: {len(data_archive.occurrence_recs)}")
-        this.logger.info(f"Number of emof records: {len(data_archive.emof_recs)}")
         this.logger.info(f"Interesting areas: {data_archive.areas}")
         this.logger.info(f"Imis dataset ID: {data_archive.imis_das_id}")
         this.logger.info(f"Good metadata: {'OK' if data_archive.goodmetadata == True else 'Not OK'}")
@@ -171,89 +196,82 @@ def dataset_qc_labeling(dataset_id, disable_index=True, with_logging=True, pool_
     # After loading, measure processing time
     time_start = time.time()
 
+    # The eMoF records are only needed as one "or"-ed qc per event/occurrence
+    emof_count = build_emof_qc(data_archive)
+
+    # Disable QC - if necessary
+    index_disabled = False
+    if disable_index:
+        if data_archive.count_records(dataset_id) > data_archive.INDEX_TRESHOLD:
+            eurobis_dataset.EurobisDataset.disable_qc_index()
+            index_disabled = True
+
+    # Records are read, QC-ed and written back per chunk, only the chunk is in memory
+    event_count = 0
+    occurrence_count = 0
+
+    # Per eventID, what the occurrences inherit from their 'father' event(s): [(qc_ev, event required fields)]
+    events_info = {}
+
     # Proceed top-down...
     if data_archive.darwin_core_type == data_archive.EVENT:
         this.logger.info(f"1A. Event")
-        # For all event records, qc event, then occurrence records
-        # (which shall recurse into eMof), then own eMof and then "or" all
-        for record in data_archive.event_recs:
-            # qc_event shall also take care of emof for event
-            # this.logger.info(f"1A. Event")
-            qc_ev = qc_event(record, data_archive)
-            record["qc"] |= qc_ev
+        for chunk in data_archive.iter_record_chunks(dataset_id, data_archive.EVENT):
+            for record in chunk:
+                # qc_event shall also take care of emof for event
+                qc_ev = qc_event(record, data_archive)
+                record["qc"] |= qc_ev
 
-            # Generate key and lookup occurrences...
-            key = f"{record['dataprovider_id']}_{record['eventID']}"
-            if key in data_archive.occ_indices:
-                for occ_record in data_archive.occ_indices[key]:
+                # Only the required fields of the event are needed for check_ev_occ_required
+                present_required = {field: True for field, value in record.items()
+                                    if value is not None and field in required_fields.required_fields}
+                key = f"{record['dataprovider_id']}_{record['eventID']}"
+                events_info.setdefault(key, []).append((qc_ev, present_required))
+
+            # Lookups must be done before the chunk is written
+            flush_lookups(data_archive)
+            update_chunk(chunk, event_count, data_archive, data_archive.EVENT)
+            event_count += len(chunk)
+
+        this.logger.info(f"2A. Occurrence")
+        for chunk in data_archive.iter_record_chunks(dataset_id, data_archive.OCCURRENCE):
+            for occ_record in chunk:
+                if occ_record['eventID'] is None:  # To link we need an eventID
+                    continue
+                key = f"{occ_record['dataprovider_id']}_{occ_record['eventID']}"
+                for qc_ev, ev_required_fields in events_info.get(key, []):
                     # qc_occurrence sall also take care of emof for occurrence
                     qc_occ = qc_occurrence(occ_record, data_archive)
                     # Check that the combination of event and occurrence have the required fields. Assign to occurrence
                     # Consequence of email 24/01/2021
-                    occ_record["qc"] |= required_fields.check_ev_occ_required(record, occ_record, False)
+                    occ_record["qc"] |= required_fields.check_ev_occ_required(ev_required_fields, occ_record, False)
                     occ_record["qc"] |= qc_occ  # make sure it is assigned other than just calculated
                     occ_record["qc"] |= qc_ev  # Occurrence also inherit 'father' event qc (email 24/01/2021)
                     # qc_ev |= qc_occ  # No aggregation upwards (email 24/01/2021)
 
-                # No longer true after email 24/01/2021
-                # Needs to propagate the REQUIRED FIELDS CHECK for the event and its occurrences
-                # qc_req_agg = [record]
-                # qc_req_agg.extend(data_archive.occ_indices[key])
-                # record["qc"] |= required_fields.check_aggregate(qc_req_agg)
+            flush_lookups(data_archive)
+            update_chunk(chunk, occurrence_count, data_archive, data_archive.OCCURRENCE)
+            occurrence_count += len(chunk)
 
     else:  # Only occurrence and emof records
         this.logger.info(f"1B. Occurence and emof")
-        for occ_record in data_archive.occurrence_recs:
-            # The QC is either 0 or a QC mask - emof are considered inside the occurrence
-            qc_occurrence(occ_record, data_archive)
+        for chunk in data_archive.iter_record_chunks(dataset_id, data_archive.OCCURRENCE):
+            for occ_record in chunk:
+                # The QC is either 0 or a QC mask - emof are considered inside the occurrence
+                qc_occurrence(occ_record, data_archive)
 
-    # Are there any lookups left to do (any record type)
-    if len(data_archive.records_for_lookup):
-        location.check_xy(data_archive.records_for_lookup)
-        data_archive.pyxylookup_counter += 1
-        dateTimeObj = datetime.now()
-        this.logger.debug(f"{dateTimeObj}: Lookups C: {data_archive.pyxylookup_counter}")
-
-        # Must propagate the QC of these records (in case)
-        if data_archive.darwin_core_type == data_archive.EVENT:
-            for looked_up_record in data_archive.records_for_lookup:
-                if looked_up_record["DarwinCoreType"] == data_archive.OCCURRENCE:
-                    key = f"{looked_up_record['dataprovider_id']}_{looked_up_record['eventID']}"
-                    if key in data_archive.event_indices:
-                        data_archive.event_indices[key][0]["qc"] |= looked_up_record["qc"]
-
-        # Empty the list
-        data_archive.records_for_lookup = []
-
-    # Disable QC - if necessary
-    if disable_index:
-        if len(data_archive.event_recs) + len(data_archive.occurrence_recs) > data_archive.INDEX_TRESHOLD:
-            eurobis_dataset.EurobisDataset.disable_qc_index()
-
-    # RECORDS UPDATE!
-    this.PROCESS_BATCH_SIZE = 1000  # Shall commit at every batch
-
-    # EVENTS
-    if len(data_archive.event_recs):
-        # Getting the splits
-        split_events_lists = misc.split_in_chunks(data_archive.event_recs, this.PROCESS_BATCH_SIZE)
-
-        for idx, process_batch in enumerate(split_events_lists):
-            eurobis_dataset.EurobisDataset.update_record_qc(process_batch, idx, this.PROCESS_BATCH_SIZE,
-                                                            data_archive.dataprovider_id, data_archive.EVENT)
-
-    # OCCURRENCES
-    if len(data_archive.occurrence_recs):
-        # Getting the splits
-        split_occurrences_lists = misc.split_in_chunks(data_archive.occurrence_recs, this.PROCESS_BATCH_SIZE)
-        for idx, process_batch in enumerate(split_occurrences_lists):
-            eurobis_dataset.EurobisDataset.update_record_qc(process_batch, idx, this.PROCESS_BATCH_SIZE,
-                                                            data_archive.dataprovider_id, data_archive.OCCURRENCE)
+            flush_lookups(data_archive)
+            update_chunk(chunk, occurrence_count, data_archive, data_archive.OCCURRENCE)
+            occurrence_count += len(chunk)
 
     # REBUILD QC index
-    if disable_index:
-        if len(data_archive.event_recs) + len(data_archive.occurrence_recs) > data_archive.INDEX_TRESHOLD:
-            eurobis_dataset.EurobisDataset.rebuild_qc_index()
+    if index_disabled:
+        eurobis_dataset.EurobisDataset.rebuild_qc_index()
+
+    if with_logging:
+        this.logger.info(f"Number of event records: {event_count}")
+        this.logger.info(f"Number of occurrence records: {occurrence_count}")
+        this.logger.info(f"Number of emof records: {emof_count}")
 
     duration = time.time() - time_start
     # Dataset QC finished, taking note of the time.

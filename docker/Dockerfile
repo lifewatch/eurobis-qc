@@ -21,4 +21,4 @@ COPY . /app
 RUN mkdir -p /output /app/dbworks/database
 WORKDIR /output
 
-CMD ["sleep", "infinity"]
+CMD ["python", "-m", "eurobisqc.examples.process_list", "--providers", "1476"]

@@ -32,6 +32,7 @@ class EurobisDataset:
     EVENT = 2
     LOOKUP_BATCH_SIZE = 1000
     INDEX_TRESHOLD = 300000
+    CHUNK_SIZE = 10000  # Records read from the DB at once when streaming a dataset
 
     record_batch_update_count = 0
 
@@ -326,6 +327,105 @@ class EurobisDataset:
         if self.has_eurobis_links is True:
             self.get_ev_occ_records(das_prov_id)
             self.get_emof_records(das_prov_id)
+
+    def load_metadata(self, das_prov_id):
+        """ given a dataset id from the dataprovider loads only the provider data and the EML,
+            the records themselves are streamed with iter_record_chunks / iter_emof_records
+            :param das_prov_id
+            """
+        self.get_provider_data(das_prov_id)
+
+        area_res = None
+
+        while area_res is None:
+            area_res = self.do_get_areas(self.imis_das_id, timeout=this.imis_timeout)
+            if area_res is None:
+                this.logger.warning("Had to re-issue call to IMIS")
+
+    def emof_key(self, record):
+        """ The key linking an eMoF record to its event or occurrence record
+            :param record: eMoF, event or occurrence record
+            :returns the key string """
+
+        if self.darwin_core_type == self.EVENT:
+            return f"{record['dataprovider_id']}_{'NULL' if record['eventID'] is None else record['eventID']}_" \
+                   f"{'NULL' if record['occurrenceID'] is None else record['occurrenceID']}"
+        else:
+            # Occurrence records in datasets with core = Occurrence may have other info in EventID and NULL in
+            # eMoF record.
+            return f"{record['dataprovider_id']}_NULL_" \
+                   f"{'NULL' if record['occurrenceID'] is None else record['occurrenceID']}"
+
+    def count_records(self, das_prov_id):
+        """ Number of event and occurrence records of the dataset
+            :param das_prov_id """
+
+        if not mssql.conn:
+            mssql.open_db()
+
+        cursor = mssql.conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM eurobis WHERE dataprovider_id = {das_prov_id};")
+        return cursor.fetchone()[0]
+
+    def iter_emof_records(self, das_prov_id):
+        """ Yields the eMoF records of the dataset one by one, fetching CHUNK_SIZE rows at a time.
+            The cursor stays open, so do not execute other queries on the connection meanwhile.
+            :param das_prov_id """
+
+        if not mssql.conn:
+            mssql.open_db()
+
+        cursor = mssql.conn.cursor()
+        cursor.execute(self.query_builder_emof(das_prov_id))
+        columns = [column[0] for column in cursor.description]
+
+        while True:
+            rows = cursor.fetchmany(self.CHUNK_SIZE)
+            if not rows:
+                break
+            for row in rows:
+                yield dict(zip(columns, row))
+
+    def iter_record_chunks(self, das_prov_id, darwin_core_type):
+        """ Yields the event or occurrence records of the dataset in lists of at most CHUNK_SIZE records.
+            Uses keyset pagination on auto_id: every chunk is a separate query, so no result set is open
+            while the QC updates of a chunk are executed.
+            :param das_prov_id
+            :param darwin_core_type: EVENT or OCCURRENCE """
+
+        last_auto_id = -1
+
+        while True:
+            if not mssql.conn:
+                mssql.open_db()
+
+            cursor = mssql.conn.cursor()
+            cursor.execute(self.query_builder_eve_occur_chunk(das_prov_id, darwin_core_type, last_auto_id))
+            columns = [column[0] for column in cursor.description]
+            chunk = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            if not chunk:
+                return
+
+            yield chunk
+            last_auto_id = chunk[-1]['auto_id']
+
+    def query_builder_eve_occur_chunk(self, dataprovider_id, darwin_core_type, after_auto_id):
+        """ Builds the SQL query string to retrieve the next CHUNK_SIZE event or occurrence records
+            :param dataprovider_id
+            :param darwin_core_type: EVENT or OCCURRENCE
+            :param after_auto_id: auto_id of the last record of the previous chunk
+            :returns SQL Query string """
+
+        sql_string = f"SELECT TOP ({self.CHUNK_SIZE}) "
+
+        for par in self.field_map_eurobis:
+            sql_string = sql_string + f"{par} as {self.field_map_eurobis[par]}, "
+
+        sql_string = sql_string + self.sql_eurobis_eventdate + self.sql_eurobis_end + f"{dataprovider_id}" \
+            f" AND DarwinCoreType = {darwin_core_type} AND auto_id > {after_auto_id} ORDER BY auto_id;"
+
+        return sql_string
 
     @threading_timeoutable()
     def do_get_areas(self, imis_das_id):

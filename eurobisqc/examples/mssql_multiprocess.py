@@ -1,7 +1,9 @@
+import os
 import sys
 import time
 import logging
-import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 
 from dbworks import mssql_db_functions as mssql
 from eurobisqc.util import misc
@@ -12,6 +14,67 @@ this = sys.modules[__name__]
 this.logger = logging.getLogger(__name__)
 this.logger.level = logging.DEBUG
 this.logger.addHandler(logging.StreamHandler())
+
+
+def available_cpus():
+    """ The number of cpus this process may use. os.cpu_count() returns all cores of the host,
+        also inside a container limited with 'cpus:', so the cgroup quota is read as well """
+
+    cpus = len(os.sched_getaffinity(0))
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            quota, period = f.read().split()
+        if quota != "max":
+            cpus = min(cpus, max(1, int(quota) // int(period)))
+    except (OSError, ValueError):
+        pass
+    return cpus
+
+
+def number_of_processes():
+    """ The number of processes for the pool: QC_PROCESSES from the environment if set, otherwise
+        the available cpus - 3 or 1 if we only have 2 cores or less.
+        Knowing that mssql needs 2 cores at least. """
+
+    if os.environ.get("QC_PROCESSES"):
+        return max(1, int(os.environ["QC_PROCESSES"]))
+
+    reserve_cpus = 1 + (0 if not mssql.server_local else 2)
+    cpus = available_cpus()
+
+    if cpus > reserve_cpus:
+        return cpus - reserve_cpus
+    return 1
+
+
+def run_pools(dataset_id_lists, dataset_names_lists, n_cpus):
+    """ Runs process_dataset_list for every list of datasets in its own process.
+        If a process dies (for instance killed because the container ran out of memory)
+        BrokenProcessPool is raised, where multiprocessing.Pool would wait forever
+        :param dataset_id_lists: One list of dataset ids per pool
+        :param dataset_names_lists: The corresponding names, for logging
+        :param n_cpus: Number of processes """
+
+    completed = set()
+
+    with ProcessPoolExecutor(n_cpus) as executor:
+        futures = {}
+        for i, dataset_id_list in enumerate(dataset_id_lists):
+            this.logger.info(f"Pool {i} will process {dataset_names_lists[i]}")
+            futures[executor.submit(process_dataset_list, i, dataset_id_list, True, True)] = i
+
+        try:
+            for future in as_completed(futures):
+                res = future.result()
+                completed.add(futures[future])
+                if isinstance(res, tuple) and res[1] > 0:
+                    this.logger.warning(f"Pool {res[0]} failed to process {res[1]} datasets")
+        except BrokenProcessPool:
+            this.logger.error("A QC process died unexpectedly, probably killed for using too much memory "
+                              "(check oom_kill in /sys/fs/cgroup/memory.events). Stopping all processes.")
+            for i in sorted(set(futures.values()) - completed):
+                this.logger.error(f"Pool {i} did not complete, its datasets: {dataset_id_lists[i]}")
+            raise
 
 
 def do_db_multi_random_percent(percent):
@@ -36,16 +99,8 @@ def do_db_multi_random_percent(percent):
     dataset_ids = []
     dataset_names = []
 
-    # we dedicate to the task the total number of processors - 3 or 1 if we only have 2 cores or less.
-    # Knowing that mssql needs 2 cores at least.
-    reserve_cpus = 1 + (0 if not mssql.server_local else 2)
-
-    if mp.cpu_count() > reserve_cpus:
-        n_cpus = mp.cpu_count() - reserve_cpus
-    else:
-        n_cpus = 1
-
-    pool = mp.Pool(n_cpus)
+    n_cpus = number_of_processes()
+    this.logger.info(f"Using {n_cpus} processes")
 
     # Connect to the database to get dataset list
     if not mssql.conn:
@@ -70,18 +125,7 @@ def do_db_multi_random_percent(percent):
     dataset_id_lists = misc.split_list(dataset_ids, n_cpus)  # We are OK until here.
     dataset_names_lists = misc.split_list(dataset_names, n_cpus)
 
-    result_pool = []
-    for i, dataset_id_list in enumerate(dataset_id_lists):
-        this.logger.info(f"Pool {i} will process {dataset_names_lists[i]} ")
-        result_pool.append(pool.apply_async(process_dataset_list, args=(i, dataset_id_list, True, True)))
-
-    for r in result_pool:
-        res = r.get()
-        if res[1] > 0:
-            this.logger.warning(f"Pool {res[0]} failed to process {res[1]} datasets")
-
-    pool.terminate()
-    pool.join()
+    run_pools(dataset_id_lists, dataset_names_lists, n_cpus)
 
     this.logger.info(f"Started at: {start_time}. All processes have completed after {time.time() - start_time}")
 
@@ -93,16 +137,8 @@ def do_db_multi_selection(dataset_ids, dataset_names, dataset_numbers = 0):
 
     start_time = time.time()
 
-    # we dedicate to the task the total number of processors - 3 or 1 if we only have 2 cores or less.
-    # Knowing that mssql needs 2 cores at least.
-    reserve_cpus = 1 + (0 if not mssql.server_local else 2)
-
-    if mp.cpu_count() > reserve_cpus:
-        n_cpus = mp.cpu_count() - reserve_cpus
-    else:
-        n_cpus = 1
-
-    pool = mp.Pool(n_cpus)
+    n_cpus = number_of_processes()
+    this.logger.info(f"Using {n_cpus} processes")
 
     # Retrieved list, now need to split
     if dataset_numbers:
@@ -115,18 +151,7 @@ def do_db_multi_selection(dataset_ids, dataset_names, dataset_numbers = 0):
     # Disable the qc index...
     # eurobis_dataset.EurobisDataset.disable_qc_index()
 
-    result_pool = []
-    for i, dataset_id_list in enumerate(dataset_id_lists):
-        this.logger.info(f"Pool {i} will process {dataset_names_lists[i]}")
-        result_pool.append(pool.apply_async(process_dataset_list, args=(i, dataset_id_list, True, True)))
-
-    for r in result_pool:
-        res = r.get()
-        if res[1] > 0:
-            this.logger.warning(f"Pool {res[0]} failed to process {res[1]} datasets")
-
-    pool.terminate()
-    pool.join()
+    run_pools(dataset_id_lists, dataset_names_lists, n_cpus)
 
     # Rebuild the QC index
     # eurobis_dataset.EurobisDataset.rebuild_qc_index()

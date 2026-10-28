@@ -3,7 +3,9 @@ services:
   qc:
     image: eurobis-qc-python:latest
     init: true
-    restart: unless-stopped
+    restart: "no"
+    mem_limit: 4g
+    cpus: 2.0
     labels:
       be.vliz.container.description: "QC python container for EurOBIS"
       be.vliz.container.owner: "dante.dumon@vliz.be"

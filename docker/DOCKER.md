@@ -67,6 +67,21 @@ dataproviders. Fitness labels are only calculated if the QC step succeeds.
 Dataset fitness calculations remain separate for each provider. Unlabelled
 record labels are SQL `NULL`.
 
+`process_list` runs in one process. `process_all` processes the datasets in
+parallel: by default it starts one process less than the CPUs of the container
+(`cpus:` in `compose.yaml`), or three less with `server_local = True`, and at
+least one. Set `QC_PROCESSES` to choose the number yourself. Every process
+holds its own dataset in memory, so they all share `mem_limit`:
+
+```sh
+QC_PROCESSES=2 python -m eurobisqc.examples.process_all
+```
+
+If one of the processes dies, for instance because it was killed for using too
+much memory, `process_all` stops all processes with a `BrokenProcessPool`
+error and logs the datasets that did not complete. These can be processed again
+with `process_list --providers ...`. The fitness labels are not calculated then.
+
 ### Fitness labels only
 
 To calculate only the fitness labels from the QC flags already stored in the

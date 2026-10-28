@@ -180,7 +180,6 @@ def check_mtid(measurement_type_id, measurement_value):
 
     for abioticid in this.abiotic_measure_type_ids:
         if abioticid in measurement_type_id:
-            print('FOUND')
             qc_mask |= qc_mask_24
 
 
