@@ -71,7 +71,8 @@ def grab_qcs(sql_string):
 def process_qcs_db():
     """ Processes the entire DB either using multiprocessing or not """
     this.logger.debug(f"Starting fitness-for-use labeling")
-    grab_qcs(f"SELECT DISTINCT qc FROM eurobis WHERE {this.provider_filter} ORDER BY qc ASC")
+    # Records without a QC value cannot be labelled; save_labels() sets them to NULL.
+    grab_qcs(f"SELECT DISTINCT qc FROM eurobis WHERE ({this.provider_filter}) AND qc IS NOT NULL ORDER BY qc ASC")
 
     # this.dataset_qc.remove(0)
     # this.dataset_qc.remove(None)
